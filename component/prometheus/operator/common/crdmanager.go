@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"golang.org/x/exp/maps"
 
 	"github.com/go-kit/log"
 	"github.com/grafana/agent/component"
@@ -124,7 +125,7 @@ func (c *crdManager) Run(ctx context.Context) error {
 	if err := c.runInformers(restConfig, ctx); err != nil {
 		return err
 	}
-	level.Info(c.logger).Log("msg", "informers  started")
+	level.Info(c.logger).Log("msg", "informers started")
 
 	var cachedTargets map[string][]*targetgroup.Group
 	// Start the target discovery loop to update the scrape manager with new targets.
@@ -133,15 +134,61 @@ func (c *crdManager) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case m := <-c.discoveryManager.SyncCh():
+			level.Debug(c.logger).Log("msg", fmt.Sprintf("%d jobs discovered by the discovery manager", len(m)))
+			for k, groups := range m {
+				for i, group := range groups {
+					if strings.Contains(k, "grafana-agent-node") {
+						level.Debug(c.logger).Log("msg", fmt.Sprintf("key %s group %d targets %d", k, i, len(group.Targets)))
+					}
+					for j, t := range group.Targets {
+						var tstr = t.String()
+						if strings.Contains(k, "grafana-agent-node") && strings.Contains(tstr, "grafana-agent-node") && strings.Contains(tstr, "8888") {
+							level.Debug(c.logger).Log("msg", fmt.Sprintf("-> %d job %s group %d (with %d targets) target %s", j, k, i, len(group.Targets), tstr))
+						}
+					}
+				}
+			}
 			cachedTargets = m
 			if c.args.Clustering.Enabled {
 				m = filterTargets(m, c.cluster)
 			}
+			level.Debug(c.logger).Log("msg", fmt.Sprintf("%d jobs after cluster filtering (local node owns)", len(m)))
+			for k, groups := range m {
+				for i, group := range groups {
+					if strings.Contains(k, "grafana-agent-node") {
+						level.Debug(c.logger).Log("msg", fmt.Sprintf("key %s group %d targets %d", k, i, len(group.Targets)))
+					}
+					for j, t := range group.Targets {
+						var tstr = t.String()
+						if strings.Contains(k, "grafana-agent-node") && strings.Contains(tstr, "grafana-agent-node") && strings.Contains(tstr, "8888") {
+							level.Debug(c.logger).Log("msg", fmt.Sprintf("-> %d job %s group %d (with %d targets) target %s", j, k, i, len(group.Targets), tstr))
+						}
+					}
+				}
+			}
 			targetSetsChan <- m
 		case <-c.clusteringUpdated:
+			level.Debug(c.logger).Log("msg", fmt.Sprintf("Cluster updated, reusing cached targets"))
+			
+			var q = filterTargets(cachedTargets, c.cluster)
+			level.Debug(c.logger).Log("msg", fmt.Sprintf("%d jobs after cluster filtering (local node owns) during cluster update", len(q)))
+			for k, groups := range q {
+				for i, group := range groups {
+					if strings.Contains(k, "grafana-agent-node") {
+						level.Debug(c.logger).Log("msg", fmt.Sprintf("key %s group %d targets %d", k, i, len(group.Targets)))
+					}
+					for j, t := range group.Targets {
+						var tstr = t.String()
+						if strings.Contains(k, "grafana-agent-node") && strings.Contains(tstr, "grafana-agent-node") && strings.Contains(tstr, "8888") {
+							level.Debug(c.logger).Log("msg", fmt.Sprintf("-> %d job %s group %d (with %d targets) target %s", j, k, i, len(group.Targets), tstr))
+						}
+					}
+				}
+			}
+
 			// if clustering updates while running, just re-filter the targets and pass them
 			// into scrape manager again, instead of reloading everything
-			targetSetsChan <- filterTargets(cachedTargets, c.cluster)
+			targetSetsChan <- q
 		}
 	}
 }
@@ -343,6 +390,7 @@ func (c *crdManager) configureInformers(ctx context.Context, informers cache.Inf
 func (c *crdManager) apply() error {
 	c.mut.Lock()
 	defer c.mut.Unlock()
+	level.Debug(c.logger).Log("msg", fmt.Sprintf("Apply discoveryConfigs for %d jobs %s", len(c.discoveryConfigs), maps.Keys(c.discoveryConfigs)))
 	err := c.discoveryManager.ApplyConfig(c.discoveryConfigs)
 	if err != nil {
 		level.Error(c.logger).Log("msg", "error applying discovery configs", "err", err)
@@ -451,6 +499,7 @@ func (c *crdManager) addServiceMonitor(sm *promopv1.ServiceMonitor) {
 			break
 		}
 		c.mut.Lock()
+		level.Debug(c.logger).Log("msg", fmt.Sprintf("Insert discoveryConfig for job %s : %s", scrapeConfig.JobName, scrapeConfig.ServiceDiscoveryConfigs))
 		c.discoveryConfigs[scrapeConfig.JobName] = scrapeConfig.ServiceDiscoveryConfigs
 		c.scrapeConfigs[scrapeConfig.JobName] = scrapeConfig
 		c.mut.Unlock()
@@ -533,9 +582,11 @@ func (c *crdManager) onDeleteProbe(obj interface{}) {
 func (c *crdManager) clearConfigs(ns, name string) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
+	level.Debug(c.logger).Log("msg", fmt.Sprintf("Clear discoveryConfigs"))
 	prefix := fmt.Sprintf("%s/%s/%s", c.kind, ns, name)
 	for k := range c.discoveryConfigs {
 		if strings.HasPrefix(k, prefix) {
+			level.Debug(c.logger).Log("msg", fmt.Sprintf("Delete discoveryConfig for job %s", k))
 			delete(c.discoveryConfigs, k)
 			delete(c.scrapeConfigs, k)
 		}
