@@ -583,7 +583,7 @@ func (c *crdManager) clearConfigs(ns, name string) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 	level.Debug(c.logger).Log("msg", fmt.Sprintf("Clear discoveryConfigs"))
-	prefix := fmt.Sprintf("%s/%s/%s", c.kind, ns, name)
+	prefix := fmt.Sprintf("%s/%s/%s/", c.kind, ns, name)
 	for k := range c.discoveryConfigs {
 		if strings.HasPrefix(k, prefix) {
 			level.Debug(c.logger).Log("msg", fmt.Sprintf("Delete discoveryConfig for job %s", k))
