@@ -31,6 +31,8 @@ func (mockCluster) Peers() []peer.Peer {
 	}}
 }
 
+func (mockCluster) DbgLog() string { return "" }
+
 func (mockCluster) Observe(ckit.Observer) {
 	// no-op
 }

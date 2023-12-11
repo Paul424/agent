@@ -105,6 +105,8 @@ func New(opts Options) (*Service, error) {
 		Label:         opts.ClusterName,
 	}
 
+	level.Info(l).Log("msg", "Created ckitConfig using NodeName ", opts.NodeName)
+
 	httpClient := &http.Client{
 		Transport: &http2.Transport{
 			AllowHTTP: true,
@@ -340,7 +342,7 @@ func (s *Service) Update(newConfig any) error {
 
 // Data returns an instance of [Cluster].
 func (s *Service) Data() any {
-	return &sharderCluster{sharder: s.sharder}
+	return &sharderCluster{sharder: s.sharder, opts: s.opts}
 }
 
 // Component is a Flow component which subscribes to clustering updates.
@@ -375,11 +377,16 @@ type Cluster interface {
 
 	// Peers returns the current set of peers for a Node.
 	Peers() []peer.Peer
+
+	DbgLog() string
 }
 
 // sharderCluster shims an implementation of [shard.Sharder] to [Cluster] which
 // removes the ability to change peers.
-type sharderCluster struct{ sharder shard.Sharder }
+type sharderCluster struct{
+	sharder shard.Sharder
+	opts   Options
+}
 
 var _ Cluster = (*sharderCluster)(nil)
 
@@ -389,4 +396,23 @@ func (sc *sharderCluster) Lookup(key shard.Key, replicationFactor int, op shard.
 
 func (sc *sharderCluster) Peers() []peer.Peer {
 	return sc.sharder.Peers()
+}
+
+func (sc *sharderCluster) DbgLog() string {
+	if !sc.opts.EnableClustering || sc.opts.DiscoverPeers == nil {
+		return fmt.Sprintf("Cluster(%t)", sc.opts.EnableClustering)
+	}
+
+	peers, err := sc.opts.DiscoverPeers()
+	if err != nil {
+		peers = []string{}
+	}
+
+	return fmt.Sprintf("Cluster(%s %t %s %d peers (%s))",
+		sc.opts.ClusterName,
+		sc.opts.EnableClustering,
+		sc.opts.NodeName,
+		len(peers),
+		strings.Join(peers, ", "),
+	)
 }

@@ -133,15 +133,17 @@ func (c *crdManager) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case m := <-c.discoveryManager.SyncCh():
+			level.Info(c.logger).Log("msg", "filterTargets due to SyncCh")
 			cachedTargets = m
 			if c.args.Clustering.Enabled {
-				m = filterTargets(m, c.cluster)
+				m = filterTargets(c.logger, m, c.cluster)
 			}
 			targetSetsChan <- m
 		case <-c.clusteringUpdated:
 			// if clustering updates while running, just re-filter the targets and pass them
 			// into scrape manager again, instead of reloading everything
-			targetSetsChan <- filterTargets(cachedTargets, c.cluster)
+			level.Info(c.logger).Log("msg", "filterTargets due to clusteringUpdated")
+			targetSetsChan <- filterTargets(c.logger, cachedTargets, c.cluster)
 		}
 	}
 }
@@ -155,11 +157,14 @@ func (c *crdManager) ClusteringUpdated() {
 
 // TODO: merge this code with the code in prometheus.scrape. This is a copy of that code, mostly because
 // we operate on slightly different data structures.
-func filterTargets(m map[string][]*targetgroup.Group, c cluster.Cluster) map[string][]*targetgroup.Group {
+func filterTargets(logger log.Logger, m map[string][]*targetgroup.Group, c cluster.Cluster) map[string][]*targetgroup.Group {
 	// the key in the map is the job name.
 	// the targetGroups have zero or more targets inside them.
 	// we should keep the same structure even when there are no targets in a group for this node to scrape,
 	// since an empty target group tells the scrape manager to stop scraping targets that match.
+	
+	level.Info(logger).Log("msg", fmt.Sprintf("filterTargets cluster (%s)", c.DbgLog()))
+
 	m2 := make(map[string][]*targetgroup.Group, len(m))
 	for k, groups := range m {
 		m2[k] = make([]*targetgroup.Group, len(groups))
@@ -173,14 +178,17 @@ func filterTargets(m map[string][]*targetgroup.Group, c cluster.Cluster) map[str
 			// We should not need to include the group's common labels, as long
 			// as each node does this consistently.
 			for _, t := range group.Targets {
+				known_peers := c.Peers()
 				peers, err := c.Lookup(shard.StringKey(nonMetaLabelString(t)), 1, shard.OpReadWrite)
 				if err != nil {
 					// This can only fail in case we ask for more owners than the
 					// available peers. This should never happen, but in any case we fall
 					// back to owning the target ourselves.
+					level.Warn(logger).Log("msg", fmt.Sprintf("filterTargets lookup failed, owning target %s (known peers %d %s)", t, len(known_peers), known_peers))
 					g2.Targets = append(g2.Targets, t)
 				}
 				if peers[0].Self {
+					level.Info(logger).Log("msg", fmt.Sprintf("filterTargets owning target %s (known peers %d %s)", t, len(known_peers), known_peers))
 					g2.Targets = append(g2.Targets, t)
 				}
 			}
